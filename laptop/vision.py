@@ -2,14 +2,14 @@
 
 Runs on the LAPTOP, not the UNO Q. Each frame: YOLO finds the paddle, its
 center picks one of 3 vertical zones (0 = left, 1 = center, 2 = right),
-and OpenCV looks for an AprilTag (36h11). With --mqtt, every frame is
-published as JSON. The laptop keeps no game state; the UNO Q decides what
+and OpenCV looks for an AprilTag (36h11). Every frame is published as JSON
+over MQTT (--no-mqtt to skip). The laptop keeps no game state; the UNO Q decides what
 the tag and zone mean.
 
     python laptop/vision.py                    # uses the only .pt in laptop/models/
     python laptop/vision.py --device gpu       # CUDA instead of the default cpu
-    python laptop/vision.py --mqtt             # publish to the public test broker
-    python laptop/vision.py --mqtt --broker localhost   # once a local broker runs
+    python laptop/vision.py --no-mqtt          # preview only, no network
+    python laptop/vision.py --broker localhost # once a local broker runs
 
 Press q (or Esc) in the preview window to quit.
 """
@@ -75,7 +75,7 @@ def detect_tag(detector, frame):
 
 
 def connect_mqtt(host, port):
-    import paho.mqtt.client as mqtt  # only needed with --mqtt
+    import paho.mqtt.client as mqtt  # not needed with --no-mqtt
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id="pingpong-laptop")
     client.connect(host, port)
@@ -124,7 +124,8 @@ def main():
     ap.add_argument("--conf", type=float, default=0.3, help="minimum confidence")
     ap.add_argument("--device", choices=["cpu", "gpu"], default="cpu",
                     help="run inference on cpu (default) or the first CUDA gpu")
-    ap.add_argument("--mqtt", action="store_true", help="publish each frame over MQTT")
+    ap.add_argument("--mqtt", action=argparse.BooleanOptionalAction, default=True,
+                    help="publish each frame over MQTT (default on; --no-mqtt to test offline)")
     ap.add_argument("--broker", default=DEFAULT_BROKER, help="MQTT broker host")
     ap.add_argument("--port", type=int, default=1883, help="MQTT broker port")
     args = ap.parse_args()
