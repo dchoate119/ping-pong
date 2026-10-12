@@ -2,3 +2,4 @@ runs/
 data.yaml
 yolov8*.pt
 yolo11*.pt
+weights/
