@@ -41,8 +41,8 @@ laptop/requirements.txt  Laptop Python deps
 
 - [x] MCU: read raw MPU-6050 data
 - [x] MCU: swing detection, sent to Python over Bridge
-- [ ] Collect and label paddle images
-- [ ] Train YOLOv8n paddle model
+- [x] Collect and label paddle images
+- [x] Train YOLOv8n paddle model
 - [ ] Laptop: paddle zone + AprilTag → MQTT
 - [ ] UNO Q: subscribe to vision, log it
 - [ ] UNO Q: game loop (serve, hit/miss, streak, levels)
