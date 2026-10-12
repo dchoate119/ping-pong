@@ -1,15 +1,16 @@
+"""UNO Q side: ping-pong game. With IMU_TEST on, runs the MPU-6050 check instead."""
+
 import time
 
 from arduino.app_utils import App
 
-print("Hello world!")
+IMU_TEST = True
+
+if IMU_TEST:
+    from imu_test import loop
+else:
+    def loop():
+        time.sleep(1)  # game goes here
 
 
-def loop():
-    """This function is called repeatedly by the App framework."""
-    # You can replace this with any code you want your App to run repeatedly.
-    time.sleep(10)
-
-
-# See: https://docs.arduino.cc/software/app-lab/tutorials/getting-started/#app-run
 App.run(user_loop=loop)
