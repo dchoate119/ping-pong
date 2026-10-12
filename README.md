@@ -39,8 +39,8 @@ laptop/requirements.txt  Laptop Python deps
 
 ### Progress
 
-- [ ] MCU: read raw MPU-6050 data
-- [ ] MCU: swing detection, sent to Python over Bridge
+- [x] MCU: read raw MPU-6050 data
+- [x] MCU: swing detection, sent to Python over Bridge
 - [ ] Collect and label paddle images
 - [ ] Train YOLOv8n paddle model
 - [ ] Laptop: paddle zone + AprilTag → MQTT

@@ -1,16 +1,23 @@
-"""UNO Q side: ping-pong game. With IMU_TEST on, runs the MPU-6050 check instead."""
+"""UNO Q side: ping-pong game, or a hardware tool picked by MODE."""
 
 import time
 
-from arduino.app_utils import App
+from arduino.app_utils import App, Bridge
 
-IMU_TEST = True
+from swings import on_swing
 
-if IMU_TEST:
+MODE = "swing_test"  # "imu_test", "swing_record", "swing_test" or "game"
+
+# The sketch sends swings in every mode, so always answer them
+Bridge.provide("swing", on_swing)
+
+if MODE == "imu_test":
     from imu_test import loop
+elif MODE == "swing_record":
+    from swing_record import loop
 else:
     def loop():
-        time.sleep(1)  # game goes here
+        time.sleep(1)  # swing_test: swings print from on_swing. Game goes here.
 
 
 App.run(user_loop=loop)
