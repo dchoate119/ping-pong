@@ -18,7 +18,19 @@ let state = { zones: 3, zone: null, box: null, swing: null, fps: 0, phase: 'wait
               result: null };
 let lastSwingId = null, lastResultId = null;
 let ballId = null, ballStart = 0;  // performance.now() at launch, synced from ball.t
-let trail = [];
+let trail = [], ovTrail = [];  // recent ball positions, split view and overlay view
+
+// Two views: 'overlay' (ball on the camera) and 'split' (camera + bird's-eye table).
+// T switches; the choice is remembered in this browser.
+let view = 'overlay';
+try { view = localStorage.getItem('view') || view; } catch (e) {}
+document.body.dataset.view = view;
+document.addEventListener('keydown', e => {
+  if (e.key !== 't' && e.key !== 'T') return;
+  view = view === 'overlay' ? 'split' : 'overlay';
+  document.body.dataset.view = view;
+  try { localStorage.setItem('view', view); } catch (e) {}
+});
 
 // --- State from Python -------------------------------------------------------
 const events = new EventSource('/events');
@@ -54,6 +66,7 @@ events.onmessage = e => {
     ballId = state.ball.id;
     ballStart = performance.now() - state.ball.t * 1000;
     trail = [];
+    ovTrail = [];
   }
 };
 
@@ -95,6 +108,20 @@ function draw() {
     ctx.fillRect(x, 0, w / n, h);
   }
 
+  // Overlay view: incoming ball's lane pulses, and the table is drawn in perspective
+  const ball = state.ball;
+  if (view === 'overlay') {
+    if (ball && ball.dir === 'in') {
+      const pulse = 0.12 + 0.1 * Math.sin(performance.now() / 120);
+      const g = ctx.createLinearGradient(0, h, 0, 0);
+      g.addColorStop(0, `rgba(255, 179, 71, ${pulse * 2})`);
+      g.addColorStop(1, 'rgba(255, 179, 71, 0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(ball.to * w / n, 0, w / n, h);
+    }
+    drawPerspectiveTable(w, h);
+  }
+
   // Zone dividers
   ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
   ctx.lineWidth = 2 * devicePixelRatio;
@@ -134,7 +161,8 @@ function draw() {
     ctx.shadowBlur = 0;
   }
 
-  drawTable();
+  if (view === 'overlay') drawOverlayBall(w, h, n);
+  else drawTable();
   requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
@@ -181,7 +209,7 @@ function drawTable() {
     tctx.fillStyle = `rgba(255, 179, 71, ${pulse})`;
     tctx.fillRect(t.x + ball.to * t.w / n, t.y + t.h / 2, t.w / n, t.h / 2);
 
-    const now = Math.min((performance.now() - ballStart) / 1000 / ball.duration, 1);
+    const now = ballProgress(ball);
     tctx.fillStyle = 'rgba(255, 179, 71, 0.7)';
     for (let p = Math.ceil(now * 40) / 40; p <= 1; p += 1 / 40) {
       const { x, y } = ballGround(ball, p, t, n);
@@ -271,10 +299,15 @@ function ballLift(ball, p, t) {
   return ballHeight(ball.kind, p) * t.h * 0.08;
 }
 
+// Progress 0..1 of the current flight, from the browser's clock
+function ballProgress(ball) {
+  return Math.min((performance.now() - ballStart) / 1000 / ball.duration, 1);
+}
+
 function drawBall(t, n, px) {
   const ball = state.ball;
   if (!ball) { trail = []; return; }
-  const p = Math.min((performance.now() - ballStart) / 1000 / ball.duration, 1);
+  const p = ballProgress(ball);
 
   const { x, y } = ballGround(ball, p, t, n);
   const z = ballHeight(ball.kind, p);
@@ -306,4 +339,110 @@ function drawBall(t, n, px) {
   tctx.arc(x, y - lift, r, 0, 2 * Math.PI);
   tctx.fill();
   tctx.shadowBlur = 0;
+}
+
+// --- Overlay view: the table in fake perspective on top of the camera -------------
+// Table coordinates: u across (0 = left, 1 = right), d along (0 = your end, 1 = far end).
+// Your end is the bottom edge of the video at full width, so the lanes there line up
+// with the camera zones. The table shrinks toward the top: s(d) is the scale at depth d.
+const FAR_SCALE = 0.3;                // far end is this fraction of the near end's width
+const K = 1 / FAR_SCALE - 1;
+const ARC = 0.25;                     // ball height 1 = this fraction of the frame height, up close
+const BALL_R = 0.04;                  // ball radius up close, as a fraction of frame width
+
+function persp(u, d, w, h) {
+  const s = 1 / (1 + K * d);
+  return { x: w / 2 + (u - 0.5) * w * s, y: h * s, s };
+}
+
+function drawPerspectiveTable(w, h) {
+  const px = devicePixelRatio;
+  const c = [persp(0, 0, w, h), persp(1, 0, w, h), persp(1, 1, w, h), persp(0, 1, w, h)];
+
+  // Faint surface and border
+  ctx.fillStyle = 'rgba(13, 42, 92, 0.25)';
+  ctx.strokeStyle = 'rgba(242, 242, 247, 0.55)';
+  ctx.lineWidth = 2 * px;
+  ctx.beginPath();
+  c.forEach((p, i) => (i ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y)));
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  // Center line along the table
+  const a = persp(0.5, 0, w, h), b = persp(0.5, 1, w, h);
+  ctx.strokeStyle = 'rgba(242, 242, 247, 0.25)';
+  ctx.beginPath();
+  ctx.moveTo(a.x, a.y);
+  ctx.lineTo(b.x, b.y);
+  ctx.stroke();
+
+  // Net across the middle, with a little height
+  const l = persp(-0.04, 0.5, w, h), r = persp(1.04, 0.5, w, h);
+  const netH = 0.06 * h * l.s;
+  ctx.fillStyle = 'rgba(0, 229, 255, 0.15)';
+  ctx.fillRect(l.x, l.y - netH, r.x - l.x, netH);
+  ctx.strokeStyle = '#00e5ff';
+  ctx.lineWidth = 3 * px;
+  ctx.shadowColor = '#00e5ff';
+  ctx.shadowBlur = 10 * px;
+  ctx.beginPath();
+  ctx.moveTo(l.x, l.y - netH);
+  ctx.lineTo(r.x, r.y - netH);
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+}
+
+// Ground point and lifted ball position on screen at progress p
+function overlayPoint(ball, p, w, h, n) {
+  const u = ((ball.from + 0.5) + (ball.to - ball.from) * p) / n;
+  const d = ball.dir === 'out' ? p : 1 - p;
+  const g = persp(u, d, w, h);
+  const z = ballHeight(ball.kind, p);
+  return { gx: g.x, gy: g.y, x: g.x, y: g.y - z * ARC * h * g.s, s: g.s, z };
+}
+
+function drawOverlayBall(w, h, n) {
+  const ball = state.ball;
+  if (!ball) { ovTrail = []; return; }
+  const px = devicePixelRatio;
+  const p = ballProgress(ball);
+
+  // Rest of an incoming ball's path, dotted
+  if (ball.dir === 'in') {
+    ctx.fillStyle = 'rgba(255, 179, 71, 0.75)';
+    for (let q = Math.ceil(p * 40) / 40; q <= 1; q += 1 / 40) {
+      const pt = overlayPoint(ball, q, w, h, n);
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, Math.max(1.5, 3 * pt.s) * px, 0, 2 * Math.PI);
+      ctx.fill();
+    }
+  }
+
+  const pt = overlayPoint(ball, p, w, h, n);
+  const r = BALL_R * w * pt.s;
+
+  ovTrail.push({ x: pt.x, y: pt.y, r });
+  if (ovTrail.length > 10) ovTrail.shift();
+
+  // Shadow on the table: darker and tighter when the ball is low
+  ctx.fillStyle = `rgba(0, 0, 0, ${0.55 - 0.35 * pt.z})`;
+  ctx.beginPath();
+  ctx.ellipse(pt.gx, pt.gy, r * 1.2, r * 0.45, 0, 0, 2 * Math.PI);
+  ctx.fill();
+
+  ovTrail.forEach((t, i) => {
+    ctx.fillStyle = `rgba(255, 179, 71, ${(i / ovTrail.length) * 0.35})`;
+    ctx.beginPath();
+    ctx.arc(t.x, t.y, t.r * (0.4 + 0.6 * i / ovTrail.length), 0, 2 * Math.PI);
+    ctx.fill();
+  });
+
+  ctx.fillStyle = '#ffb347';
+  ctx.shadowColor = '#ffb347';
+  ctx.shadowBlur = 20 * px;
+  ctx.beginPath();
+  ctx.arc(pt.x, pt.y, r, 0, 2 * Math.PI);
+  ctx.fill();
+  ctx.shadowBlur = 0;
 }
