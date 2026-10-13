@@ -11,7 +11,10 @@
   <body>
     <header class="hud">
       <div class="stat"><span class="label">STREAK</span><span id="streak">0</span></div>
-      <h1>PING PONG</h1>
+      <div class="title">
+        <h1>PING PONG</h1>
+        <span id="level" class="level">EASY</span>
+      </div>
       <div class="stat"><span class="label">RECORD</span><span id="record">0</span></div>
     </header>
     <div class="arena">
@@ -19,7 +22,10 @@
         <img id="video" src="/video" alt="camera" />
         <canvas id="overlay"></canvas>
         <div id="swing" class="swing"></div>
-        <div id="banner" class="banner">SWING TO SERVE</div>
+        <div id="banner" class="banner">
+          SWING TO SERVE
+          <div class="hint">show a tag to change level</div>
+        </div>
         <div id="result" class="result"></div>
       </div>
       <div class="table-panel">

@@ -37,6 +37,26 @@ h1 {
   text-shadow: 0 0 12px var(--cyan);
 }
 
+.title {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.level {
+  font-size: clamp(10px, 1.4vw, 16px);
+  color: var(--pink);
+  text-shadow: 0 0 10px var(--pink);
+}
+
+.hint {
+  margin-top: 12px;
+  font-size: clamp(8px, 1.1vw, 13px);
+  color: var(--dim);
+  text-shadow: 0 0 4px #000;
+}
+
 .stat {
   display: flex;
   flex-direction: column;

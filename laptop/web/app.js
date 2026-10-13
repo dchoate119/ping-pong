@@ -11,6 +11,7 @@ const bannerEl = document.querySelector('#banner');
 const resultEl = document.querySelector('#result');
 const streakEl = document.querySelector('#streak');
 const recordEl = document.querySelector('#record');
+const levelEl = document.querySelector('#level');
 
 let state = { zones: 3, zone: null, box: null, swing: null, fps: 0, phase: 'waiting', ball: null,
               result: null };
@@ -37,8 +38,9 @@ events.onmessage = e => {
     }
     lastResultId = state.result.id;
   }
-  setNumber(streakEl, state.streak);
-  setNumber(recordEl, state.record);
+  setHud(streakEl, state.streak);
+  setHud(recordEl, state.record);
+  setHud(levelEl, state.level);
   bannerEl.classList.toggle('hidden', state.phase !== 'waiting');
   if (state.ball && state.ball.id !== ballId) {
     ballId = state.ball.id;
@@ -47,8 +49,8 @@ events.onmessage = e => {
   }
 };
 
-// HUD number that bumps when it changes
-function setNumber(el, value) {
+// HUD value that bumps when it changes
+function setHud(el, value) {
   if (el.textContent === String(value)) return;
   el.textContent = value;
   el.classList.remove('bump');
@@ -96,6 +98,22 @@ function draw() {
     ctx.stroke();
   }
   ctx.setLineDash([]);
+
+  // AprilTag outline with its ID
+  if (state.tag) {
+    const c = state.tag.corners.map(([x, y]) => [x * w, y * h]);
+    ctx.strokeStyle = '#ff3d9a';
+    ctx.lineWidth = 3 * devicePixelRatio;
+    ctx.beginPath();
+    c.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.closePath();
+    ctx.stroke();
+    ctx.fillStyle = '#ff3d9a';
+    ctx.font = `${12 * devicePixelRatio}px 'Press Start 2P', monospace`;
+    ctx.textAlign = 'left';
+    const left = Math.min(...c.map(p => p[0])), top = Math.min(...c.map(p => p[1]));
+    ctx.fillText(`TAG ${state.tag.id}`, left, top - 8 * devicePixelRatio);
+  }
 
   // Paddle box
   if (state.box) {

@@ -4,6 +4,7 @@ Runs on the LAPTOP. Paddle detection reuses vision.py. Swings arrive over MQTT
 from the UNO Q (python/main.py, MODE = "game"). The game is shown in the
 browser at http://localhost:8000 (webview.py serves it from laptop/web/).
 Serve, then hit each return in the right lane on time. A miss ends the rally.
+Show a level tag (laptop/tags/levels.pdf) between rallies to change the speed.
 
     python laptop/game.py                  # uses the only .pt in laptop/models/
     python laptop/game.py --device gpu     # CUDA instead of the default cpu
@@ -24,7 +25,8 @@ import paho.mqtt.client as mqtt
 from ultralytics import YOLO
 
 import webview
-from vision import DEFAULT_BROKER, ZONES, best_detection, find_model, zone_of
+from vision import (DEFAULT_BROKER, ZONES, best_detection, detect_tag, find_model,
+                    make_tag_detector, zone_of)
 
 # Must match python/main.py on the UNO Q
 SWING_TOPIC = "dchoate119/pingpong/swing"
@@ -36,10 +38,16 @@ JPEG_QUALITY = 80
 HOLD = 0.3         # seconds a paddle zone stays valid after the paddle was last seen
 SERVE_TIME = 1.0   # seconds for your serve to reach the far end
 HIT_TIME = 1.0     # seconds for your hit to reach the far end
-RETURN_TIME = 3.0  # seconds for the opponent's return to reach you (easy)
-HIT_WINDOW = 0.5   # a swing counts if within +-this many seconds of the ball arriving
 SWING_LAG = 0.1    # seconds a swing takes to arrive over MQTT; see the "delay~" printout
 MISS_PAUSE = 1.5   # seconds to show a miss before waiting for the next serve
+
+# AprilTag ID -> (name, return time, hit window). Return time: seconds for the opponent's
+# return to reach you. Hit window: a swing counts within +-this many seconds of arrival.
+LEVELS = {
+    1: ("EASY", 3.0, 0.5),
+    2: ("MEDIUM", 2.0, 0.4),
+    3: ("HARD", 0.75, 0.3),
+}
 
 RECORD_FILE = Path(__file__).parent / "record.json"  # best streak, kept between runs
 
@@ -58,6 +66,7 @@ def save_record(record):
 class Game:
     """Game state machine.
 
+    waiting --tag--> (level changes, still waiting)
     waiting --swing--> serve --> incoming --swing in time, right lane--> outgoing --> incoming ...
                                     |
                                     +--wrong lane, or no swing in time--> miss --> waiting
@@ -77,6 +86,7 @@ class Game:
         self.result = None  # last {"id", "text"}; the page pops it up when id changes
         self.streak = 0
         self.record = load_record()
+        self.level = 1  # key into LEVELS; a tag changes it while waiting
 
     def launch(self, kind, direction, lane_from, lane_to, duration, now):
         self.ball_id += 1
@@ -98,7 +108,7 @@ class Game:
             dt = t - self.arrive_time()
             target = self.ball["to"]
             print(f"    swing {dt:+.2f} s from arrival, paddle zone {zone}, target {target}")
-            if dt < -HIT_WINDOW:
+            if dt < -self.hit_window():
                 return  # too early: ignore it, there is still time to swing again
             if zone == target:
                 self.streak += 1
@@ -111,12 +121,23 @@ class Game:
     def update(self, now):
         if self.phase in ("serve", "outgoing") and now >= self.arrive_time():
             # The opponent returns from where the ball landed to a random lane on your side
-            self.launch("return", "in", self.ball["to"], random.randrange(ZONES), RETURN_TIME, now)
+            self.launch("return", "in", self.ball["to"], random.randrange(ZONES),
+                        LEVELS[self.level][1], now)
             self.set_phase("incoming", now)
-        elif self.phase == "incoming" and now > self.arrive_time() + HIT_WINDOW:
+        elif self.phase == "incoming" and now > self.arrive_time() + self.hit_window():
             self.miss(now)
         elif self.phase == "miss" and now - self.phase_t0 >= MISS_PAUSE:
             self.set_phase("waiting", now)
+
+    def hit_window(self):
+        return LEVELS[self.level][2]
+
+    def on_tag(self, tag):
+        """A tag in view picks the level, but only between rallies."""
+        if self.phase == "waiting" and tag in LEVELS and tag != self.level:
+            self.level = tag
+            print(f"    level {LEVELS[tag][0]}")
+            self.show(LEVELS[tag][0])
 
     def miss(self, now):
         if self.streak > self.record:
@@ -142,7 +163,8 @@ class Game:
         """For the page. ball["t"] is seconds since launch, so the page can sync its animation."""
         ball = dict(self.ball, t=round(now - self.ball_t0, 3)) if self.ball else None
         return {"phase": self.phase, "ball": ball, "result": self.result,
-                "streak": self.streak, "record": self.record}
+                "streak": self.streak, "record": self.record,
+                "level": LEVELS[self.level][0]}
 
 
 def connect_swings(host, port):
@@ -206,6 +228,7 @@ def main():
         print(f"    published {float(record)} to '{RECORD_TOPIC}'")
 
     game = Game(on_record=publish_record)
+    tag_detector = make_tag_detector()
     held_zone, held_t = None, 0.0
     try:
         while True:
@@ -219,6 +242,7 @@ def main():
             result = model.predict(frame, imgsz=args.imgsz, conf=args.conf,
                                    device=device, verbose=False)[0]
             det = best_detection(result, w, h)
+            tag, tag_corners = detect_tag(tag_detector, frame)
             now = time.perf_counter()
             if det:
                 held_zone, held_t = zone_of(det["cx"]), now
@@ -232,6 +256,8 @@ def main():
                 print(f"SWING {s['swing']:8}  gy {s['gy']:5.0f}  zone={zone}  "
                       f"delay~{s['rx'] - s['t']:+.2f} s")
                 game.on_swing(zone, now)
+            if tag is not None:
+                game.on_tag(tag)
             game.update(now)
 
             inst_fps = 1.0 / max(now - last, 1e-6)
@@ -239,10 +265,12 @@ def main():
             last = now
 
             # Box is normalized 0..1 so the page can scale it to any size
+            tag_view = {"id": tag, "corners": [[round(float(x) / w, 4), round(float(y) / h, 4)]
+                                               for x, y in tag_corners]} if tag is not None else None
             box = [round(v, 4) for v in (det["xyxy"][0] / w, det["xyxy"][1] / h,
                                          det["xyxy"][2] / w, det["xyxy"][3] / h)] if det else None
             state = {"zones": ZONES, "zone": zone, "box": box, "swing": swing, "fps": round(fps, 1),
-                     **game.state(now)}
+                     "tag": tag_view, **game.state(now)}
             ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             hub.publish(jpeg.tobytes(), state)
     except KeyboardInterrupt:

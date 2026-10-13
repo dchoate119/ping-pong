@@ -66,12 +66,18 @@ def make_tag_detector():
 
 
 def detect_tag(detector, frame):
-    """Return (id, corners) of the first tag found, or (None, None)."""
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    """Return (id, corners) of the first tag found, or (None, None).
+
+    frame is the mirrored view shown on screen. A mirrored tag decodes wrong, so
+    detect on the un-mirrored image and mirror the corners back to match frame.
+    """
+    gray = cv2.flip(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), 1)
     corners, ids, _ = detector.detectMarkers(gray)
     if ids is None or len(ids) == 0:
         return None, None
-    return int(ids.flatten()[0]), corners[0].reshape(-1, 2)  # shapes differ across OpenCV versions
+    c = corners[0].reshape(-1, 2).copy()  # shapes differ across OpenCV versions
+    c[:, 0] = frame.shape[1] - 1 - c[:, 0]
+    return int(ids.flatten()[0]), c
 
 
 def connect_mqtt(host, port):
