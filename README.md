@@ -2,38 +2,55 @@
 
 ### Description
 
-Virtual ping pong with an Arduino UNO Q and a 3D-printed paddle. A laptop webcam tracks the paddle with a custom YOLOv8n model and reads AprilTags to pick the level and start the game. An MPU-6050 on the paddle detects swings. A ball counts as a hit when the paddle is in the target zone and a swing lands in the timing window. The record streak is published over MQTT, and the game is shown on a web page served by the UNO Q.
+Virtual ping pong with an Arduino UNO Q and a 3D-printed paddle. A laptop webcam tracks the paddle with a custom YOLOv8n model and reads AprilTags to pick the level. An MPU-6050 on the paddle detects swings on the UNO Q, which sends them to the laptop over MQTT. The laptop runs the game and shows it in the browser: the camera feed next to a bird's-eye table with the ball. A ball counts as a hit when the paddle is in the target lane and a swing lands in the timing window. The record streak is published over MQTT.
 
 ### System layout
 
-- **Laptop** (`laptop/vision.py`): webcam → YOLO paddle zone + AprilTag → MQTT
 - **UNO Q MCU** (`sketch/sketch.ino`): MPU-6050 over I2C → swing detection → Bridge
-- **UNO Q MPU** (`python/main.py`): vision (MQTT) + swings (Bridge) → game loop → score (MQTT) + game state (WebUI)
-- **Browser**: game page served by the UNO Q on port 7000
+- **UNO Q MPU** (`python/main.py`): swings (Bridge) → MQTT
+- **Laptop** (`laptop/game.py`): webcam → YOLO paddle lane + AprilTag level, swings (MQTT) → game loop → record (MQTT) + game page
+- **Browser**: game page served by the laptop at `http://localhost:8000`
 
 | Link | Details |
 |---|---|
-| MQTT (vision) | Broker `test.mosquitto.org`. Topic `dchoate119/pingpong/vision`. Payload `{t, found, cx, cy, zone, tag}`, coordinates normalized 0–1 |
-| MQTT (score) | Topic `ME193/Rogers/<name>`. Payload: record streak as a float, e.g. `7.0` |
+| MQTT (swings) | Broker `test.mosquitto.org`. Topic `dchoate119/pingpong/swing`. Payload `{t, swing, gy}`, swing is `forehand` or `backhand` |
+| MQTT (score) | Topic `ME193/Rogers/daniel`. Payload: record streak as a float, e.g. `7.0`. Sent only when the record is beaten |
 | Bridge | MCU → Python swing events |
-| WebUI | `http://<board-ip>:7000`. Python pushes game state to the page |
+| Game page | `laptop/webview.py` serves `laptop/web/`, the camera as MJPEG on `/video`, and game state as Server-Sent Events on `/events` |
 
 ### Game
 
-1. Show an AprilTag to the webcam. The tag ID sets the level (ball speed), and the game starts.
-2. Each ball is served toward a random zone.
-3. Hit = paddle in that zone and a swing within the timing window. Each hit adds 1 to the streak.
-4. A miss ends the game. If the streak beat the record, the new record is published.
+1. While "SWING TO SERVE" shows, hold up a level tag (`laptop/tags/levels.pdf`) to pick the level.
+2. Swing to serve. The ball goes to the far end.
+3. The opponent returns it to a random lane on your side. The lane pulses and a dotted line shows the path.
+4. Hit = paddle in that lane and a swing within the timing window around arrival. Each hit adds 1 to the streak and the rally continues.
+5. A wrong lane or no swing in time is a miss and ends the rally. If the streak beat the record, the new record is saved and published.
+
+| Tag | Level | Return time | Timing window |
+|---|---|---|---|
+| ID 1 | EASY | 3.0 s | ±0.5 s |
+| ID 2 | MEDIUM | 2.0 s | ±0.4 s |
+| ID 3 | HARD | 0.75 s | ±0.3 s |
+
+Levels and timing are set at the top of `laptop/game.py`. Tags are AprilTag 36h11.
 
 ### Project structure
 
 ```
 app.yaml                 UNO Q app manifest
-python/main.py           UNO Q: game loop, MQTT, WebUI
+python/main.py           UNO Q: swings → MQTT; MODE picks game or a test tool
+python/swings.py         UNO Q: swing handler for the sketch
+python/imu_test.py       UNO Q test tool: MPU-6050 hardware check
+python/swing_record.py   UNO Q test tool: one line per motion, for picking swing thresholds
+python/vision.py         UNO Q test tool: receive laptop/vision.py over MQTT
 sketch/sketch.ino        UNO Q MCU: MPU-6050 swing detection
-assets/                  Web page
-laptop/vision.py         Laptop: webcam YOLO + AprilTag → MQTT
+laptop/game.py           Laptop: camera, YOLO, tags, game loop, MQTT
+laptop/webview.py        Laptop: web server for the game page
+laptop/web/              Game page (HTML, JS, CSS)
+laptop/vision.py         Laptop: detection helpers, and a standalone camera test
+laptop/tags/levels.pdf   Printable level tags
 laptop/models/           Trained YOLOv8n weights
+laptop/training.ipynb    Paddle model training
 laptop/requirements.txt  Laptop Python deps
 ```
 
@@ -43,16 +60,30 @@ laptop/requirements.txt  Laptop Python deps
 - [x] MCU: swing detection, sent to Python over Bridge
 - [x] Collect and label paddle images
 - [x] Train YOLOv8n paddle model
-- [ ] Laptop: paddle zone + AprilTag → MQTT
-- [ ] UNO Q: subscribe to vision, log it
-- [ ] UNO Q: game loop (serve, hit/miss, streak, levels)
-- [ ] Publish record to `ME193/Rogers/<name>`
-- [ ] WebUI page
+- [x] Laptop: paddle lane + AprilTag detection
+- [x] UNO Q: send swings to the laptop over MQTT
+- [x] Laptop: game loop (serve, return, hit/miss, streak, record)
+- [x] Game page: camera feed + bird's-eye table
+- [x] AprilTag levels
+- [x] Publish record to `ME193/Rogers/daniel`
+- [ ] Sounds
+- [ ] Ball overlaid on the camera view
 - [ ] Tune thresholds, timing window, ball speeds
 
 ### Commands
 
 ```bash
+# Deploy the UNO Q side (from unoq-workspace)
+python3 tools/deploy.py ping-pong
+
+# Run the game on the laptop (from ping-pong), then open http://localhost:8000
+python3 laptop/game.py --device gpu
+
+# Camera test without the game: preview window with lanes and tags
+python3 laptop/vision.py --device gpu --no-mqtt
+
 # Stop the app on the board
 python3 tools/deploy.py --cmd "arduino-app-cli app stop /home/arduino/ArduinoApps/ping-pong"
 ```
+
+The record is kept in `laptop/record.json` (not committed). Delete it to reset.
