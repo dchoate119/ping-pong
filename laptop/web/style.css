@@ -90,6 +90,14 @@ h1 {
   gap: 16px;
 }
 
+/* Overlay view: camera only, as big as fits (4:3 video below the HUD) */
+body[data-view="overlay"] { --arena-w: min(96vw, 104vh); }
+body[data-view="overlay"] .arena { grid-template-columns: 1fr; }
+body[data-view="overlay"] .table-panel { display: none; }
+/* Dim the camera so the table and ball stand out */
+body[data-view="overlay"] #video { opacity: 0.55; }
+body[data-view="overlay"] .stage { background: #000; }
+
 .table-panel {
   position: relative;
   border: 2px solid var(--cyan);
@@ -205,4 +213,5 @@ footer {
 }
 
 .conn { color: var(--pink); margin-right: 24px; }
+.keys { margin-right: 24px; }
 .conn.on { color: var(--neon); }
