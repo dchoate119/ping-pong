@@ -100,7 +100,27 @@ def to_message(det, zone, tag):
     return json.dumps(msg)
 
 
-def draw(frame, det, zone, tag, tag_corners, fps, yolo_ms, tag_ms):
+def draw_pose(frame, pose):
+    """Skeleton: the player's right arm orange, left arm cyan, body white."""
+    from pose import SKELETON  # only needed when pose is on
+    h, w = frame.shape[:2]
+    for a, b in SKELETON:
+        if a in pose and b in pose:
+            color = ((0, 165, 255) if a.startswith("right") and b.startswith("right") else
+                     (255, 255, 0) if a.startswith("left") and b.startswith("left") else
+                     (255, 255, 255))
+            pa = (int(pose[a][0] * w), int(pose[a][1] * h))
+            pb = (int(pose[b][0] * w), int(pose[b][1] * h))
+            cv2.line(frame, pa, pb, color, 3)
+    for name in ("left_wrist", "right_wrist"):
+        if name in pose:
+            p = (int(pose[name][0] * w), int(pose[name][1] * h))
+            cv2.circle(frame, p, 8, (0, 165, 255) if name.startswith("right") else (255, 255, 0), -1)
+            cv2.putText(frame, name[0].upper(), (p[0] + 10, p[1]),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+
+def draw(frame, det, zone, tag, tag_corners, fps, yolo_ms, tag_ms, pose_ms):
     h, w = frame.shape[:2]
     if zone is not None:
         overlay = frame.copy()
@@ -118,7 +138,8 @@ def draw(frame, det, zone, tag, tag_corners, fps, yolo_ms, tag_ms):
         cv2.polylines(frame, [tag_corners.astype(int)], True, (255, 0, 255), 2)
         cv2.putText(frame, f"tag {tag}", (10, 75),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
-    cv2.putText(frame, f"{fps:.1f} fps  yolo {yolo_ms:.1f} ms  tag {tag_ms:.1f} ms", (10, 25),
+    cv2.putText(frame, f"{fps:.1f} fps  yolo {yolo_ms:.1f}  tag {tag_ms:.1f}  pose {pose_ms:.1f} ms",
+                (10, 25),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
 
 
@@ -143,13 +164,15 @@ def main():
     model = YOLO(str(model_path))
     print(f"Model: {model_path}  classes: {model.names}  device: {args.device}")
     tag_detector = make_tag_detector()
+    from pose import PoseTracker  # mediapipe is only needed here, not by the helpers above
+    pose_tracker = PoseTracker()
 
     cap = cv2.VideoCapture(args.camera)
     if not cap.isOpened():
         raise SystemExit(f"Could not open camera {args.camera}")
 
     fps = 0.0
-    yolo_ms = tag_ms = 0.0
+    yolo_ms = tag_ms = pose_ms = 0.0
     last = time.perf_counter()
     last_print = 0.0
     try:
@@ -167,6 +190,8 @@ def main():
             t1 = time.perf_counter()
             tag, tag_corners = detect_tag(tag_detector, frame)
             t2 = time.perf_counter()
+            pose = pose_tracker.detect(frame)
+            t3 = time.perf_counter()
 
             det = best_detection(result, w, h)
             zone = zone_of(det["cx"]) if det else None
@@ -178,15 +203,20 @@ def main():
             fps = 0.9 * fps + 0.1 * inst_fps if fps else inst_fps  # smoothed
             yolo_ms = 0.9 * yolo_ms + 0.1 * (t1 - t0) * 1000 if yolo_ms else (t1 - t0) * 1000
             tag_ms = 0.9 * tag_ms + 0.1 * (t2 - t1) * 1000 if tag_ms else (t2 - t1) * 1000
+            pose_ms = 0.9 * pose_ms + 0.1 * (t3 - t2) * 1000 if pose_ms else (t3 - t2) * 1000
             last = now
 
             if now - last_print > 0.5:
                 last_print = now
                 where = f"zone={zone}  cx={det['cx']:.3f}  cy={det['cy']:.3f}" if det else "no paddle"
+                wrists = {k[0].upper(): f"{v[0]:.2f}" for k, v in (pose or {}).items()
+                          if k.endswith("wrist")}
                 print(f"{fps:5.1f} fps  yolo {yolo_ms:5.1f} ms  tag {tag_ms:4.1f} ms  "
-                      f"{where}  tag={tag}")
+                      f"pose {pose_ms:4.1f} ms  {where}  tag={tag}  wrist x={wrists}")
 
-            draw(frame, det, zone, tag, tag_corners, fps, yolo_ms, tag_ms)
+            if pose:
+                draw_pose(frame, pose)
+            draw(frame, det, zone, tag, tag_corners, fps, yolo_ms, tag_ms, pose_ms)
             cv2.imshow("ping-pong vision", frame)
             if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
                 break
@@ -195,6 +225,7 @@ def main():
             mqtt_client.publish(TOPIC, to_message(None, None, None), qos=0)
             mqtt_client.loop_stop()
             mqtt_client.disconnect()
+        pose_tracker.close()
         cap.release()
         cv2.destroyAllWindows()
 
