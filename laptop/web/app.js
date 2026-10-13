@@ -7,6 +7,7 @@ const ctx = canvas.getContext('2d');
 const swingEl = document.querySelector('#swing');
 const connEl = document.querySelector('#conn');
 const boardEl = document.querySelector('#board');
+const laneEl = document.querySelector('#lane');
 const fpsEl = document.querySelector('#fps');
 const bannerEl = document.querySelector('#banner');
 const resultEl = document.querySelector('#result');
@@ -70,6 +71,10 @@ events.onmessage = e => {
   fpsEl.textContent = `${state.fps.toFixed(0)} fps  pose ${state.pose_ms.toFixed(0)} ms`;
   boardEl.textContent = state.board ? 'board: live' : 'board: offline';
   boardEl.classList.toggle('on', state.board);
+  // Where the lane comes from: the YOLO paddle, or the paddle-hand wrist as a backup
+  laneEl.textContent = `lane: ${state.lane_src || 'none'}`;
+  laneEl.classList.toggle('on', state.lane_src === 'paddle');
+  laneEl.classList.toggle('backup', state.lane_src === 'wrist');
   // Pop-ups fire when an id changes, but not for the old value seen on page load
   if (state.swing && state.swing.id !== lastSwingId) {
     if (lastSwingId !== null) pop(swingEl, state.swing.name.toUpperCase());

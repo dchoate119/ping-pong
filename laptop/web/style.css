@@ -250,3 +250,4 @@ footer {
 .conn { color: var(--pink); margin-right: 24px; }
 .keys { margin-right: 24px; }
 .conn.on { color: var(--neon); }
+.conn.backup { color: var(--orange); }

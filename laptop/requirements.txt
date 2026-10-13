@@ -1,2 +1,4 @@
 ultralytics
 paho-mqtt
+# mediapipe: install separately with `pip install mediapipe --no-deps`. A normal install
+# pulls in opencv-contrib-python, which clashes with ultralytics' opencv-python.

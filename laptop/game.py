@@ -275,12 +275,17 @@ def main():
                 held_zone, held_t = zone_of(det["cx"]), now
             # A few missed frames keep the last zone, so a dropout mid-swing isn't a miss
             zone = held_zone if now - held_t < HOLD else None
+            # Past the hold, fall back to the paddle-hand wrist (the paddle is in that hand)
+            lane_src = "paddle" if zone is not None else None
+            wrist = (pose or {}).get(f"{game.hand}_wrist")
+            if zone is None and wrist:
+                zone, lane_src = zone_of(min(max(wrist[0], 0.0), 1.0)), "wrist"
 
             while not swings.empty():
                 s = swings.get()
                 swing = {"id": (swing["id"] + 1) if swing else 1, "name": s["swing"]}
                 # Board and laptop clocks may differ, so treat the delay as a rough guide
-                print(f"SWING {s['swing']:8}  gy {s['gy']:5.0f}  zone={zone}  "
+                print(f"SWING {s['swing']:8}  gy {s['gy']:5.0f}  zone={zone} ({lane_src})  "
                       f"delay~{s['rx'] - s['t']:+.2f} s")
                 game.on_swing(zone, now)
             if tag is not None:
@@ -297,7 +302,7 @@ def main():
             box = [round(v, 4) for v in (det["xyxy"][0] / w, det["xyxy"][1] / h,
                                          det["xyxy"][2] / w, det["xyxy"][3] / h)] if det else None
             pose_view = {k: [round(x, 4), round(y, 4)] for k, (x, y) in pose.items()} if pose else None
-            state = {"zones": ZONES, "zone": zone, "box": box, "swing": swing, "fps": round(fps, 1),
+            state = {"zones": ZONES, "zone": zone, "lane_src": lane_src, "box": box, "swing": swing, "fps": round(fps, 1),
                      "pose": pose_view, "pose_ms": round(pose_ms, 1),
                      "tag": tag_view, "board": time.monotonic() - board["seen"] < BOARD_TIMEOUT,
                      **game.state(now)}
