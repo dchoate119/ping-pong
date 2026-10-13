@@ -6,6 +6,7 @@ const canvas = document.querySelector('#overlay');
 const ctx = canvas.getContext('2d');
 const swingEl = document.querySelector('#swing');
 const connEl = document.querySelector('#conn');
+const boardEl = document.querySelector('#board');
 const fpsEl = document.querySelector('#fps');
 const bannerEl = document.querySelector('#banner');
 const resultEl = document.querySelector('#result');
@@ -22,10 +23,17 @@ let trail = [];
 // --- State from Python -------------------------------------------------------
 const events = new EventSource('/events');
 events.onopen = () => { connEl.textContent = 'live'; connEl.classList.add('on'); };
-events.onerror = () => { connEl.textContent = 'reconnecting…'; connEl.classList.remove('on'); };
+events.onerror = () => {
+  connEl.textContent = 'reconnecting…';
+  connEl.classList.remove('on');
+  boardEl.textContent = 'board: ?';
+  boardEl.classList.remove('on');
+};
 events.onmessage = e => {
   state = JSON.parse(e.data);
   fpsEl.textContent = `${state.fps.toFixed(0)} fps`;
+  boardEl.textContent = state.board ? 'board: live' : 'board: offline';
+  boardEl.classList.toggle('on', state.board);
   // Pop-ups fire when an id changes, but not for the old value seen on page load
   if (state.swing && state.swing.id !== lastSwingId) {
     if (lastSwingId !== null) pop(swingEl, state.swing.name.toUpperCase());

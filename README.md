@@ -14,6 +14,7 @@ Virtual ping pong with an Arduino UNO Q and a 3D-printed paddle. A laptop webcam
 | Link | Details |
 |---|---|
 | MQTT (swings) | Broker `test.mosquitto.org`. Topic `dchoate119/pingpong/swing`. Payload `{t, swing, gy}`, swing is `forehand` or `backhand` |
+| MQTT (heartbeat) | Topic `dchoate119/pingpong/heartbeat`. Payload `{t}` every 2 s, so the game page can show whether the board is up |
 | MQTT (score) | Topic `ME193/Rogers/daniel`. Payload: record streak as a float, e.g. `7.0`. Sent only when the record is beaten |
 | Bridge | MCU → Python swing events |
 | Game page | `laptop/webview.py` serves `laptop/web/`, the camera as MJPEG on `/video`, and game state as Server-Sent Events on `/events` |

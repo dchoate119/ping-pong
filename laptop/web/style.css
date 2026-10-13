@@ -204,5 +204,5 @@ footer {
   color: var(--dim);
 }
 
-.conn { color: var(--pink); }
+.conn { color: var(--pink); margin-right: 24px; }
 .conn.on { color: var(--neon); }

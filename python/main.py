@@ -14,6 +14,8 @@ MODE = "game"  # "imu_test", "swing_record", "swing_test", "vision_test" or "gam
 BROKER = "test.mosquitto.org"
 PORT = 1883
 SWING_TOPIC = "dchoate119/pingpong/swing"
+HEARTBEAT_TOPIC = "dchoate119/pingpong/heartbeat"  # lets the game page show the board is up
+HEARTBEAT_EVERY = 2.0  # seconds
 
 # The sketch sends swings in every mode, so always answer them
 swing_handler = on_swing
@@ -43,7 +45,8 @@ elif MODE == "game":
         return True
 
     def loop():
-        time.sleep(1)  # swings are published from swing_handler
+        time.sleep(HEARTBEAT_EVERY)  # swings are published from swing_handler
+        client.publish(HEARTBEAT_TOPIC, json.dumps({"t": time.time()}), qos=0)
 else:
     def loop():
         time.sleep(1)  # swing_test: swings print from on_swing

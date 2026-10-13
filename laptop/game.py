@@ -30,6 +30,7 @@ from vision import (DEFAULT_BROKER, ZONES, best_detection, detect_tag, find_mode
 
 # Must match python/main.py on the UNO Q
 SWING_TOPIC = "dchoate119/pingpong/swing"
+HEARTBEAT_TOPIC = "dchoate119/pingpong/heartbeat"  # board sends one every 2 s
 RECORD_TOPIC = "ME193/Rogers/daniel"  # class scoreboard; payload is the record as a float
 
 WEB_PORT = 8000
@@ -40,6 +41,7 @@ SERVE_TIME = 1.0   # seconds for your serve to reach the far end
 HIT_TIME = 1.0     # seconds for your hit to reach the far end
 SWING_LAG = 0.1    # seconds a swing takes to arrive over MQTT; see the "delay~" printout
 MISS_PAUSE = 1.5   # seconds to show a miss before waiting for the next serve
+BOARD_TIMEOUT = 5.0  # seconds without a heartbeat or swing before the board shows offline
 
 # AprilTag ID -> (name, return time, hit window). Return time: seconds for the opponent's
 # return to reach you. Hit window: a swing counts within +-this many seconds of arrival.
@@ -167,15 +169,23 @@ class Game:
                 "level": LEVELS[self.level][0]}
 
 
-def connect_swings(host, port):
-    """Subscribe to swings from the UNO Q. Returns (client, queue of swing dicts)."""
+def connect_board(host, port):
+    """Subscribe to the UNO Q. Returns (client, queue of swing dicts, board).
+
+    board["seen"] is the time.monotonic() of the last heartbeat or swing.
+    """
     swings = queue.SimpleQueue()
+    board = {"seen": float("-inf")}
 
     def on_connect(client, userdata, flags, reason_code, properties):
-        print(f"MQTT connected to {host}: {reason_code}, subscribing to '{SWING_TOPIC}'")
-        client.subscribe(SWING_TOPIC, qos=0)  # (re)subscribe on every reconnect
+        print(f"MQTT connected to {host}: {reason_code}, subscribing to the board")
+        # (re)subscribe on every reconnect
+        client.subscribe([(SWING_TOPIC, 0), (HEARTBEAT_TOPIC, 0)])
 
     def on_message(client, userdata, msg):
+        board["seen"] = time.monotonic()
+        if msg.topic == HEARTBEAT_TOPIC:
+            return
         try:
             data = json.loads(msg.payload)
         except ValueError:
@@ -189,7 +199,7 @@ def connect_swings(host, port):
     client.on_message = on_message
     client.connect(host, port)
     client.loop_start()
-    return client, swings
+    return client, swings, board
 
 
 def main():
@@ -205,7 +215,7 @@ def main():
     args = ap.parse_args()
     device = "0" if args.device == "gpu" else "cpu"  # ultralytics device names
 
-    client, swings = connect_swings(args.broker, args.port)
+    client, swings, board = connect_board(args.broker, args.port)
 
     model_path = find_model(args.model)
     model = YOLO(str(model_path))
@@ -270,7 +280,8 @@ def main():
             box = [round(v, 4) for v in (det["xyxy"][0] / w, det["xyxy"][1] / h,
                                          det["xyxy"][2] / w, det["xyxy"][3] / h)] if det else None
             state = {"zones": ZONES, "zone": zone, "box": box, "swing": swing, "fps": round(fps, 1),
-                     "tag": tag_view, **game.state(now)}
+                     "tag": tag_view, "board": time.monotonic() - board["seen"] < BOARD_TIMEOUT,
+                     **game.state(now)}
             ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
             hub.publish(jpeg.tobytes(), state)
     except KeyboardInterrupt:
