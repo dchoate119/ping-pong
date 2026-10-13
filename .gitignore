@@ -1,2 +1,5 @@
 # ignore app cache folder
 .cache/
+
+# Python bytecode
+__pycache__/

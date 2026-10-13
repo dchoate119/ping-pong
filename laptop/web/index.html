@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Ping Pong</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="hud">
+      <div class="stat"><span class="label">STREAK</span><span id="streak">0</span></div>
+      <h1>PING PONG</h1>
+      <div class="stat"><span class="label">RECORD</span><span id="record">0</span></div>
+    </header>
+    <div class="arena">
+      <div class="stage">
+        <img id="video" src="/video" alt="camera" />
+        <canvas id="overlay"></canvas>
+        <div id="swing" class="swing"></div>
+        <div id="banner" class="banner">SWING TO SERVE</div>
+        <div id="result" class="result"></div>
+      </div>
+      <div class="table-panel">
+        <canvas id="table"></canvas>
+      </div>
+    </div>
+    <footer>
+      <span id="conn" class="conn">connecting…</span>
+      <span id="fps"></span>
+    </footer>
+    <script src="app.js"></script>
+  </body>
+</html>
