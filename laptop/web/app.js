@@ -13,6 +13,7 @@ const resultEl = document.querySelector('#result');
 const streakEl = document.querySelector('#streak');
 const recordEl = document.querySelector('#record');
 const levelEl = document.querySelector('#level');
+const handsEl = document.querySelector('#hands');
 
 let state = { zones: 3, zone: null, box: null, swing: null, fps: 0, phase: 'waiting', ball: null,
               result: null };
@@ -32,9 +33,32 @@ document.addEventListener('keydown', e => {
   try { localStorage.setItem('view', view); } catch (e) {}
 });
 
+// Paddle hand: picked with the LEFT/RIGHT buttons between rallies, remembered in this
+// browser, and sent to Python on every (re)connect so a restarted game.py gets it back.
+let hand = 'right';
+try { hand = localStorage.getItem('hand') || hand; } catch (e) {}
+function sendHand() {
+  fetch('/hand', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                   body: JSON.stringify({ hand }) }).catch(() => {});
+}
+function showHand() {
+  handsEl.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.hand === hand));
+}
+handsEl.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+  hand = b.dataset.hand;
+  try { localStorage.setItem('hand', hand); } catch (e) {}
+  showHand();
+  sendHand();
+}));
+showHand();
+
 // --- State from Python -------------------------------------------------------
 const events = new EventSource('/events');
-events.onopen = () => { connEl.textContent = 'live'; connEl.classList.add('on'); };
+events.onopen = () => {
+  connEl.textContent = 'live';
+  connEl.classList.add('on');
+  sendHand();
+};
 events.onerror = () => {
   connEl.textContent = 'reconnecting…';
   connEl.classList.remove('on');
@@ -43,7 +67,7 @@ events.onerror = () => {
 };
 events.onmessage = e => {
   state = JSON.parse(e.data);
-  fpsEl.textContent = `${state.fps.toFixed(0)} fps`;
+  fpsEl.textContent = `${state.fps.toFixed(0)} fps  pose ${state.pose_ms.toFixed(0)} ms`;
   boardEl.textContent = state.board ? 'board: live' : 'board: offline';
   boardEl.classList.toggle('on', state.board);
   // Pop-ups fire when an id changes, but not for the old value seen on page load
@@ -62,6 +86,7 @@ events.onmessage = e => {
   setHud(recordEl, state.record);
   setHud(levelEl, state.level);
   bannerEl.classList.toggle('hidden', state.phase !== 'waiting');
+  handsEl.classList.toggle('hidden', state.phase !== 'waiting');
   if (state.ball && state.ball.id !== ballId) {
     ballId = state.ball.id;
     ballStart = performance.now() - state.ball.t * 1000;
@@ -98,8 +123,8 @@ function draw() {
   const w = canvas.width, h = canvas.height, n = state.zones;
   ctx.clearRect(0, 0, w, h);
 
-  // Paddle's zone glows
-  if (state.zone !== null) {
+  // Paddle's zone glows (not on levels with glow off)
+  if (state.zone !== null && state.glow !== false) {
     const x = state.zone * w / n;
     const g = ctx.createLinearGradient(0, h, 0, 0);
     g.addColorStop(0, 'rgba(57, 255, 136, 0.35)');
@@ -111,7 +136,7 @@ function draw() {
   // Overlay view: incoming ball's lane pulses, and the table is drawn in perspective
   const ball = state.ball;
   if (view === 'overlay') {
-    if (ball && ball.dir === 'in') {
+    if (ball && ball.dir === 'in' && state.glow !== false) {
       const pulse = 0.12 + 0.1 * Math.sin(performance.now() / 120);
       const g = ctx.createLinearGradient(0, h, 0, 0);
       g.addColorStop(0, `rgba(255, 179, 71, ${pulse * 2})`);
@@ -122,17 +147,19 @@ function draw() {
     drawPerspectiveTable(w, h);
   }
 
-  // Zone dividers
+  // Zone dividers (not on levels with dividers off)
   ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
   ctx.lineWidth = 2 * devicePixelRatio;
   ctx.setLineDash([12 * devicePixelRatio, 10 * devicePixelRatio]);
-  for (let k = 1; k < n; k++) {
+  for (let k = 1; k < n && state.dividers !== false; k++) {
     ctx.beginPath();
     ctx.moveTo(k * w / n, 0);
     ctx.lineTo(k * w / n, h);
     ctx.stroke();
   }
   ctx.setLineDash([]);
+
+  if (state.pose) drawSkeleton(w, h);
 
   // AprilTag outline with its ID
   if (state.tag) {
@@ -167,6 +194,55 @@ function draw() {
 }
 requestAnimationFrame(draw);
 
+// --- Body pose: neon skeleton, the paddle arm bright orange ----------------------
+// Same lines as SKELETON in pose.py. Points are normalized, in the mirrored view.
+const SKELETON = [
+  ['left_shoulder', 'right_shoulder'], ['left_hip', 'right_hip'],
+  ['left_shoulder', 'left_hip'], ['right_shoulder', 'right_hip'],
+  ['left_shoulder', 'left_elbow'], ['left_elbow', 'left_wrist'],
+  ['right_shoulder', 'right_elbow'], ['right_elbow', 'right_wrist'],
+];
+
+function drawSkeleton(w, h) {
+  const pose = state.pose, px = devicePixelRatio;
+  const paddle = state.hand || hand;  // Python's choice is what the game uses
+  const other = paddle === 'left' ? 'right' : 'left';
+  const side = (a, b) => (a.startsWith(paddle) && b.startsWith(paddle) ? 'paddle'
+                         : a.startsWith(other) && b.startsWith(other) ? 'other' : 'body');
+  const STYLE = {
+    body:   { color: 'rgba(242, 242, 247, 0.45)', width: 3, glow: 0 },
+    other:  { color: 'rgba(0, 229, 255, 0.7)', width: 4, glow: 8 },
+    paddle: { color: '#ff8c1a', width: 6, glow: 18 },
+  };
+  ctx.lineCap = 'round';
+  // Body first, paddle arm last so it sits on top
+  for (const part of ['body', 'other', 'paddle']) {
+    const s = STYLE[part];
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = s.width * px;
+    ctx.shadowColor = s.color;
+    ctx.shadowBlur = s.glow * px;
+    for (const [a, b] of SKELETON) {
+      if (side(a, b) !== part || !pose[a] || !pose[b]) continue;
+      ctx.beginPath();
+      ctx.moveTo(pose[a][0] * w, pose[a][1] * h);
+      ctx.lineTo(pose[b][0] * w, pose[b][1] * h);
+      ctx.stroke();
+    }
+  }
+  for (const [name, s, r] of [[`${other}_wrist`, STYLE.other, 6], [`${paddle}_wrist`, STYLE.paddle, 10]]) {
+    if (!pose[name]) continue;
+    ctx.fillStyle = s.color;
+    ctx.shadowColor = s.color;
+    ctx.shadowBlur = s.glow * px;
+    ctx.beginPath();
+    ctx.arc(pose[name][0] * w, pose[name][1] * h, r * px, 0, 2 * Math.PI);
+    ctx.fill();
+  }
+  ctx.shadowBlur = 0;
+  ctx.lineCap = 'butt';
+}
+
 // --- Table, bird's-eye view: opponent at the top, you at the bottom -----------
 const tableCanvas = document.querySelector('#table');
 const tctx = tableCanvas.getContext('2d');
@@ -196,15 +272,16 @@ function drawTable() {
   tctx.fillStyle = '#0d2a5c';
   tctx.fillRect(t.x, t.y, t.w, t.h);
 
-  // Your lane glows where the paddle is
-  if (state.zone !== null) {
+  // Your lane glows where the paddle is (not on levels with glow off)
+  if (state.zone !== null && state.glow !== false) {
     tctx.fillStyle = 'rgba(57, 255, 136, 0.25)';
     tctx.fillRect(t.x + state.zone * t.w / n, t.y + t.h / 2, t.w / n, t.h / 2);
   }
 
   // Incoming ball: its target lane pulses and the rest of its path is dotted
+  // (neither on levels with glow off)
   const ball = state.ball;
-  if (ball && ball.dir === 'in') {
+  if (ball && ball.dir === 'in' && state.glow !== false) {
     const pulse = 0.25 + 0.2 * Math.sin(performance.now() / 120);
     tctx.fillStyle = `rgba(255, 179, 71, ${pulse})`;
     tctx.fillRect(t.x + ball.to * t.w / n, t.y + t.h / 2, t.w / n, t.h / 2);
@@ -219,11 +296,11 @@ function drawTable() {
     }
   }
 
-  // Lane dividers on your half
+  // Lane dividers on your half (not on levels with dividers off)
   tctx.strokeStyle = 'rgba(0, 229, 255, 0.6)';
   tctx.lineWidth = 2 * px;
   tctx.setLineDash([8 * px, 8 * px]);
-  for (let k = 1; k < n; k++) {
+  for (let k = 1; k < n && state.dividers !== false; k++) {
     const x = t.x + k * t.w / n;
     tctx.beginPath();
     tctx.moveTo(x, t.y + t.h / 2);
@@ -408,8 +485,8 @@ function drawOverlayBall(w, h, n) {
   const px = devicePixelRatio;
   const p = ballProgress(ball);
 
-  // Rest of an incoming ball's path, dotted
-  if (ball.dir === 'in') {
+  // Rest of an incoming ball's path, dotted (not on levels with glow off)
+  if (ball.dir === 'in' && state.glow !== false) {
     ctx.fillStyle = 'rgba(255, 179, 71, 0.75)';
     for (let q = Math.ceil(p * 40) / 40; q <= 1; q += 1 / 40) {
       const pt = overlayPoint(ball, q, w, h, n);

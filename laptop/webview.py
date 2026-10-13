@@ -3,6 +3,7 @@
     /         web/index.html (and the other files in web/)
     /video    camera as MJPEG, for an <img>
     /events   game state as Server-Sent Events, one JSON per frame
+    /hand     POST {"hand": "left" | "right"}: the player's paddle hand
 
 game.py calls publish() once per frame; every open page gets the newest frame
 and state. Only the standard library is used.
@@ -39,8 +40,25 @@ class Hub:
             return self.seq, self.jpeg, self.state
 
 
-def make_handler(hub):
+def make_handler(hub, on_hand):
     class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            if self.path.split("?")[0] != "/hand":
+                self.send_error(404)
+                return
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                hand = json.loads(self.rfile.read(length))["hand"]
+            except (ValueError, KeyError, TypeError):
+                hand = None
+            if hand not in ("left", "right"):
+                self.send_error(400)
+                return
+            if on_hand:
+                on_hand(hand)
+            self.send_response(204)
+            self.end_headers()
+
         def do_GET(self):
             path = self.path.split("?")[0]
             try:
@@ -95,10 +113,13 @@ def make_handler(hub):
     return Handler
 
 
-def start(port):
-    """Serve in a background thread. Returns the Hub to publish() into."""
+def start(port, on_hand=None):
+    """Serve in a background thread. Returns the Hub to publish() into.
+
+    on_hand(hand) is called (from a server thread) when the page picks a hand.
+    """
     hub = Hub()
-    server = ThreadingHTTPServer(("", port), make_handler(hub))
+    server = ThreadingHTTPServer(("", port), make_handler(hub, on_hand))
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return hub
