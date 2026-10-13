@@ -3,6 +3,7 @@
   --neon: #39ff88;
   --cyan: #00e5ff;
   --pink: #ff3d9a;
+  --orange: #ff8c1a;  /* paddle arm */
   --text: #f2f2f7;
   --dim: #8a8aa0;
   /* Camera takes 2/3 of the width (4:3), table panel the rest; whole arena fits the window */
@@ -201,6 +202,40 @@ body[data-view="overlay"] .stage { background: #000; }
 
 @keyframes blink {
   to { visibility: hidden; }
+}
+
+/* Paddle hand picker, shown between rallies (kept out of the blinking banner) */
+.hands {
+  position: absolute;
+  top: 28%;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+}
+
+.hands.hidden { display: none; }
+
+.hands button {
+  font-family: inherit;
+  font-size: clamp(9px, 1.2vw, 14px);
+  padding: 10px 14px;
+  color: var(--dim);
+  background: rgba(7, 7, 13, 0.7);
+  border: 2px solid var(--dim);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.hands button:hover { color: var(--text); border-color: var(--text); }
+
+.hands button.on {
+  color: var(--orange);
+  border-color: var(--orange);
+  box-shadow: 0 0 14px var(--orange);
+  text-shadow: 0 0 8px var(--orange);
 }
 
 footer {

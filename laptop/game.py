@@ -25,6 +25,7 @@ import paho.mqtt.client as mqtt
 from ultralytics import YOLO
 
 import webview
+from pose import PoseTracker
 from vision import (DEFAULT_BROKER, ZONES, best_detection, detect_tag, find_model,
                     make_tag_detector, zone_of)
 
@@ -43,12 +44,15 @@ SWING_LAG = 0.1    # seconds a swing takes to arrive over MQTT; see the "delay~"
 MISS_PAUSE = 1.5   # seconds to show a miss before waiting for the next serve
 BOARD_TIMEOUT = 5.0  # seconds without a heartbeat or swing before the board shows offline
 
-# AprilTag ID -> (name, return time, hit window). Return time: seconds for the opponent's
-# return to reach you. Hit window: a swing counts within +-this many seconds of arrival.
+# AprilTag ID -> (name, return time, hit window, dividers, glow). Return time: seconds for
+# the opponent's return to reach you. Hit window: a swing counts within +-this many seconds
+# of arrival. Dividers / glow: whether the page shows the lane lines / the aiming hints
+# (green glow on your paddle's lane, orange glow on the incoming ball's target lane, and
+# the incoming ball's dotted path).
 LEVELS = {
-    1: ("EASY", 3.0, 0.5),
-    2: ("MEDIUM", 2.0, 0.4),
-    3: ("HARD", 0.75, 0.3),
+    1: ("EASY", 3.0, 0.5, True, True),
+    2: ("MEDIUM", 2.0, 0.4, False, True),
+    3: ("HARD", 1.5, 0.3, False, False),
 }
 
 RECORD_FILE = Path(__file__).parent / "record.json"  # best streak, kept between runs
@@ -89,6 +93,7 @@ class Game:
         self.streak = 0
         self.record = load_record()
         self.level = 1  # key into LEVELS; a tag changes it while waiting
+        self.hand = "right"  # player's paddle hand; the page sets it with its LEFT/RIGHT buttons
 
     def launch(self, kind, direction, lane_from, lane_to, duration, now):
         self.ball_id += 1
@@ -166,7 +171,8 @@ class Game:
         ball = dict(self.ball, t=round(now - self.ball_t0, 3)) if self.ball else None
         return {"phase": self.phase, "ball": ball, "result": self.result,
                 "streak": self.streak, "record": self.record,
-                "level": LEVELS[self.level][0]}
+                "level": LEVELS[self.level][0], "dividers": LEVELS[self.level][3],
+                "glow": LEVELS[self.level][4], "hand": self.hand}
 
 
 def connect_board(host, port):
@@ -225,20 +231,28 @@ def main():
     if not cap.isOpened():
         raise SystemExit(f"Could not open camera {args.camera}")
 
-    hub = webview.start(WEB_PORT)
-    url = f"http://localhost:{WEB_PORT}"
-    print(f"Game page: {url}")
-    webbrowser.open(url)
-
-    fps = 0.0
-    last = time.perf_counter()
-    swing = None  # last swing as {"id", "name"}; the page flashes when id changes
     def publish_record(record):
         client.publish(RECORD_TOPIC, str(float(record)), qos=1)
         print(f"    published {float(record)} to '{RECORD_TOPIC}'")
 
     game = Game(on_record=publish_record)
+
+    def set_hand(hand):
+        if hand != game.hand:
+            print(f"    paddle hand: {hand}")
+        game.hand = hand
+
+    hub = webview.start(WEB_PORT, on_hand=set_hand)
+    url = f"http://localhost:{WEB_PORT}"
+    print(f"Game page: {url}")
+    webbrowser.open(url)
+
+    fps = 0.0
+    pose_ms = 0.0
+    last = time.perf_counter()
+    swing = None  # last swing as {"id", "name"}; the page flashes when id changes
     tag_detector = make_tag_detector()
+    pose_tracker = PoseTracker()
     held_zone, held_t = None, 0.0
     try:
         while True:
@@ -253,7 +267,10 @@ def main():
                                    device=device, verbose=False)[0]
             det = best_detection(result, w, h)
             tag, tag_corners = detect_tag(tag_detector, frame)
+            t0 = time.perf_counter()
+            pose = pose_tracker.detect(frame)
             now = time.perf_counter()
+            pose_ms = 0.9 * pose_ms + 0.1 * (now - t0) * 1000 if pose_ms else (now - t0) * 1000
             if det:
                 held_zone, held_t = zone_of(det["cx"]), now
             # A few missed frames keep the last zone, so a dropout mid-swing isn't a miss
@@ -279,7 +296,9 @@ def main():
                                                for x, y in tag_corners]} if tag is not None else None
             box = [round(v, 4) for v in (det["xyxy"][0] / w, det["xyxy"][1] / h,
                                          det["xyxy"][2] / w, det["xyxy"][3] / h)] if det else None
+            pose_view = {k: [round(x, 4), round(y, 4)] for k, (x, y) in pose.items()} if pose else None
             state = {"zones": ZONES, "zone": zone, "box": box, "swing": swing, "fps": round(fps, 1),
+                     "pose": pose_view, "pose_ms": round(pose_ms, 1),
                      "tag": tag_view, "board": time.monotonic() - board["seen"] < BOARD_TIMEOUT,
                      **game.state(now)}
             ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
@@ -289,6 +308,7 @@ def main():
     finally:
         client.loop_stop()
         client.disconnect()
+        pose_tracker.close()
         cap.release()
 
 
